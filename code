@@ -1,0 +1,207 @@
+
+simple_notepad_fixed.py
+A minimal text editor using Tkinter with File, Edit, and Help menus.
+Fixed issues:
+ - Proper tracking of "modified" state (avoids spurious save prompts).
+ - Select All works from the Edit menu and shortcut.
+ - Modified flag is reset after save/open/new.
+ - Shortcuts bound reliably.
+ - Minor robustness around file IO errors.
+"""
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from tkinter.scrolledtext import ScrolledText
+import os
+
+class SimpleNotepad:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Simple Notepad")
+        self.filepath = None
+        self.modified = False  # track unsaved changes explicitly
+
+        # Configure window
+        self.root.geometry("900x600")
+
+        # Text area with scrollbar and undo enabled
+        self.text = ScrolledText(root, wrap=tk.WORD, undo=True)
+        self.text.pack(fill=tk.BOTH, expand=1)
+
+        # Build menus
+        self._build_menu()
+        self._bind_shortcuts()
+
+        # Track modifications: widget sets the "<<Modified>>" event when edited.
+        self.text.bind("<<Modified>>", self._on_modified)
+
+    def _build_menu(self):
+        menubar = tk.Menu(self.root)
+
+        # File menu
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="New", accelerator="Ctrl+N", command=self.new_file)
+        file_menu.add_command(label="Open...", accelerator="Ctrl+O", command=self.open_file)
+        file_menu.add_command(label="Save", accelerator="Ctrl+S", command=self.save_file)
+        file_menu.add_command(label="Save As...", accelerator="Shift+Ctrl+S", command=self.save_as)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", accelerator="Ctrl+Q", command=self.exit_app)
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        # Edit menu
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        edit_menu.add_command(label="Undo", accelerator="Ctrl+Z", command=self.undo)
+        edit_menu.add_command(label="Redo", accelerator="Ctrl+Y", command=self.redo)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Cut", accelerator="Ctrl+X", command=lambda: self.text.event_generate("<<Cut>>"))
+        edit_menu.add_command(label="Copy", accelerator="Ctrl+C", command=lambda: self.text.event_generate("<<Copy>>"))
+        edit_menu.add_command(label="Paste", accelerator="Ctrl+V", command=lambda: self.text.event_generate("<<Paste>>"))
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Select All", accelerator="Ctrl+A", command=self.select_all)
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+
+        # Help menu
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="About", command=self.show_about)
+        menubar.add_cascade(label="Help", menu=help_menu)
+
+        self.root.config(menu=menubar)
+
+    # --- File operations ---
+    def new_file(self, *args):
+        if self._maybe_save():
+            self.text.delete(1.0, tk.END)
+            self.filepath = None
+            self.modified = False
+            self.text.edit_modified(False)
+            self._update_title()
+
+    def open_file(self, *args):
+        if not self._maybe_save():
+            return
+        fp = filedialog.askopenfilename(filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
+        if fp:
+            try:
+                with open(fp, "r", encoding="utf-8") as f:
+                    data = f.read()
+                self.text.delete(1.0, tk.END)
+                self.text.insert(tk.END, data)
+                self.filepath = fp
+                self.modified = False
+                self.text.edit_modified(False)
+                self._update_title()
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not open file:\n{e}")
+
+    def save_file(self, *args):
+        if self.filepath:
+            try:
+                text = self.text.get(1.0, tk.END)
+                # keep file ending newline as user expects; strip trailing extra empty lines
+                with open(self.filepath, "w", encoding="utf-8") as f:
+                    f.write(text.rstrip("\n"))
+                self.modified = False
+                self.text.edit_modified(False)
+                self._update_title()
+                messagebox.showinfo("Saved", f"Saved to {self.filepath}")
+                return True
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not save file:\n{e}")
+                return False
+        else:
+            return self.save_as()
+
+    def save_as(self, *args):
+        fp = filedialog.asksaveasfilename(defaultextension=".txt",
+                                          filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
+        if fp:
+            try:
+                text = self.text.get(1.0, tk.END)
+                with open(fp, "w", encoding="utf-8") as f:
+                    f.write(text.rstrip("\n"))
+                self.filepath = fp
+                self.modified = False
+                self.text.edit_modified(False)
+                self._update_title()
+                messagebox.showinfo("Saved", f"Saved to {self.filepath}")
+                return True
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not save file:\n{e}")
+                return False
+        return False
+
+    def exit_app(self, *args):
+        if self._maybe_save():
+            self.root.destroy()
+
+    def _maybe_save(self):
+        # If nothing modified, no prompt
+        if not self.modified:
+            return True
+        result = messagebox.askyesnocancel("Save changes?", "Do you want to save changes?")
+        if result is True:
+            return self.save_file()
+        elif result is False:
+            return True
+        else:
+            return False
+
+    # --- Edit operations ---
+    def undo(self, *args):
+        try:
+            self.text.edit_undo()
+        except tk.TclError:
+            pass
+
+    def redo(self, *args):
+        try:
+            self.text.edit_redo()
+        except tk.TclError:
+            pass
+
+    def select_all(self, *args):
+        try:
+            self.text.tag_add("sel", "1.0", "end")
+            self.text.mark_set("insert", "1.0")
+            self.text.see("insert")
+        except tk.TclError:
+            pass
+
+    # --- Help ---
+    def show_about(self):
+        messagebox.showinfo("About", "Simple Notepad\nBuilt with Tkinter\nFeatures: New/Open/Save/Undo/Redo/Cut/Copy/Paste")
+
+    # --- Shortcuts ---
+    def _bind_shortcuts(self):
+        self.root.bind("<Control-n>", self.new_file)
+        self.root.bind("<Control-o>", self.open_file)
+        self.root.bind("<Control-s>", self.save_file)
+        # Shift+Ctrl+S typically comes through as uppercase S; bind both to be safe
+        self.root.bind("<Control-S>", self.save_as)
+        self.root.bind("<Control-q>", self.exit_app)
+        self.root.bind("<Control-z>", self.undo)
+        self.root.bind("<Control-y>", self.redo)
+        # Select All
+        self.root.bind("<Control-a>", lambda e: (self.select_all(), "break"))
+
+    def _on_modified(self, event=None):
+        """
+        Called when the Text widget reports it's been modified.
+        We set our own flag and then reset the widget's modified flag
+        so this event only fires when new edits occur.
+        """
+        # Only act if the widget reports it was modified
+        if self.text.edit_modified():
+            self.modified = True
+            self._update_title()
+            # reset the widget's modified flag to avoid repeated events
+            self.text.edit_modified(False)
+
+    def _update_title(self):
+        name = os.path.basename(self.filepath) if self.filepath else "Untitled"
+        mark = "*" if self.modified else ""
+        self.root.title(f"Simple Notepad - {name}{mark}")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = SimpleNotepad(root)
+    root.mainloop()
